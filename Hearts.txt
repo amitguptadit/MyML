@@ -1,0 +1,125 @@
+    def load_data(self):
+        self.download_data()
+        train_generator = ImageDataGenerator(rescale=1/255.0)
+        test_generator = ImageDataGenerator(rescale=1/255.0)
+        val_generator = ImageDataGenerator(rescale=1/255.0)
+        self.train = train_generator.flow_from_directory(os.path.join(self.data_path, 'chest_xray/chest_xray/train'),
+                                                         target_size=(64, 64),
+                                                         batch_size=32,
+                                                         color_mode='grayscale',
+                                                         class_mode='binary')
+        self.test = test_generator.flow_from_directory(os.path.join(self.data_path, 'chest_xray/chest_xray/test'),
+                                                         target_size=(64, 64),
+                                                         batch_size=32,
+                                                         color_mode='grayscale',
+                                                         class_mode='binary')
+
+        self.val = val_generator.flow_from_directory(os.path.join(self.data_path, 'chest_xray/chest_xray/test'),
+                                                     target_size=(64, 64),
+                                                     batch_size=32,
+                                                     color_mode='grayscale',
+                                                     class_mode='binary')
+        logger.info('{} images in training set; {} are PNEUMONIA'.format(self.train.samples, sum(self.train.labels)))
+        
+        
+        
+        =============
+            def define_model(self):
+	        model = Sequential()
+	        model.add(Conv2D(32, (3, 3), activation='relu', input_shape=(64, 64, 1)))
+	        model.add(MaxPooling2D(2, 2))
+	        model.add(Conv2D(32, (3, 3), activation='relu'))
+	        model.add(MaxPooling2D(2, 2))
+	        model.add(Flatten())
+	        model.add(Dense(128, activation='relu'))
+	        model.add(Dense(1, activation='sigmoid'))
+	        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        return model
+        
+        
+        ================
+        
+           def train_model(self):
+	        self.load_data()
+	        steps_per_epoch = self.train.samples // self.train.batch_size
+	        validation_steps = self.val.samples // self.val.batch_size
+	        self.model = self.define_model()
+	        self.model.fit_generator(self.train,
+	                                 epochs=self.epochs,
+	                                 validation_data=self.val,
+	                                 steps_per_epoch=steps_per_epoch,
+                                 validation_steps=validation_steps)
+                                 
+                                 
+        =================
+        
+            def deploy_model(self):
+	        self.train_model()
+	        loss, acc = self.model.evaluate_generator(self.test,
+	                                                  steps=self.test.samples // self.test.batch_size)
+	        logger.info('Model has been trained with loss, accuracy of {}, {}'.format(loss, acc))
+	        self.model.save_weights(os.path.join(self.model_path, 'weights.h5'))
+        logger.info('Model weights have been saved to {}'.format(self.model_path))
+        
+        
+        ===============
+        
+        
+        import io
+	import tensorflow as tf
+	
+	from fastapi import APIRouter, File
+	from PIL import Image
+	from keras.preprocessing.image import img_to_array
+	
+	from classifier.train import Train
+	
+	router = APIRouter()
+	
+	
+	@router.post('/predict')
+	def pnuemonia_router(image_file: bytes = File(...)):
+	    model = Train().define_model()
+	    model.load_weights('classifier/models/weights.h5')
+	
+	    image = Image.open(io.BytesIO(image_file))
+	
+	    if image.mode != 'L':
+	        image = image.convert('L')
+	
+	    image = image.resize((64, 64))
+	    image = img_to_array(image)/255.0
+	    image = image.reshape(1, 64, 64, 1)
+	
+	    graph = tf.get_default_graph()
+	
+	    with graph.as_default():
+	        prediction = model.predict_proba(image)
+	
+	    predicted_class = 'pneumonia' if prediction[0] > 0.5 else 'normal'
+	
+	    return {'predicted_class': predicted_class,
+            'pneumonia_probability': str(prediction[0])}
+            
+            
+            
+        ========================
+        
+        from fastapi import FastAPI
+	from classifier.routers import pneumonia_router
+	
+	app = FastAPI()
+	app.include_router(pneumonia_router.router, prefix='/pneumonia')  # noqa
+	
+	
+	@app.get('/healthcheck', status_code=200)
+	async def healthcheck():
+    return 'Good to go'
+    
+    
+    ==========================
+    
+    Running the App Locally
+    We can boot up our app locally by running this line in the command line:
+    uvicorn --host 0.0.0.0 --port 5000 classifier.app:app
+The logging informs us that the server is running on http://0.0.0.0:5000
